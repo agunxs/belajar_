@@ -99,4 +99,96 @@ if train_file is not None:
             models = {
                 'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
                 'Random Forest': RandomForestClassifier(random_state=42),
-                'XGBoost': XGBClassifier(random_state=42, eval_metric='mlogloss
+                'XGBoost': XGBClassifier(random_state=42, eval_metric='mlogloss'),
+                'LDA': LDA()
+            }
+
+            results = {}
+            for name, model in models.items():
+                if name in ['Logistic Regression', 'LDA']:
+                    model.fit(X_train_scaled, y_train)
+                    y_pred = model.predict(X_val_scaled)
+                else:
+                    model.fit(X_train, y_train)
+                    y_pred = model.predict(X_val)
+
+                acc = accuracy_score(y_val, y_pred)
+                results[name] = {
+                    'model_object': model,
+                    'accuracy': acc,
+                    'report': classification_report(y_val, y_pred, output_dict=True)
+                }
+
+            # Tampilkan Hasil Akurasi
+            df_results = pd.DataFrame({
+                'Model': results.keys(),
+                'Accuracy': [info['accuracy'] for info in results.values()]
+            }).sort_values(by='Accuracy', ascending=False)
+            
+            st.subheader("Peringkat Akurasi Model")
+            st.dataframe(df_results.style.highlight_max(subset=['Accuracy'], color='lightgreen'))
+
+            # Simpan model terbaik ke session state
+            best_model_name = df_results.iloc[0]['Model']
+            st.session_state['best_model'] = results[best_model_name]['model_object']
+            st.session_state['best_model_name'] = best_model_name
+            st.session_state['scaler'] = scaler
+
+            # Evaluasi Mendalam Model Terbaik (Asumsi Regresi Logistik terbaik sesuai notebook)
+            eval_model = results['Logistic Regression']['model_object']
+            y_val_pred_lr = eval_model.predict(X_val_scaled)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Classification Report (Logistic Regression)")
+                report_df = pd.DataFrame(results['Logistic Regression']['report']).transpose()
+                st.dataframe(report_df)
+
+            with col2:
+                st.subheader("Confusion Matrix (Logistic Regression)")
+                cm = confusion_matrix(y_val, y_val_pred_lr)
+                fig_cm, ax_cm = plt.subplots(figsize=(6, 4))
+                disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1, 2, 3])
+                disp.plot(cmap='Blues', ax=ax_cm)
+                plt.grid(False)
+                st.pyplot(fig_cm)
+
+    # --- PREDIKSI DATA UJI ---
+    if test_df is not None and 'best_model' in st.session_state:
+        st.header("Hasil Prediksi pada Data Pengujian")
+        
+        # Penyelarasan kolom
+        X_test_data = test_df.drop(columns=['id'], errors='ignore')
+        
+        # Standarisasi data test menggunakan scaler yang telah dilatih
+        scaler_loaded = st.session_state['scaler']
+        X_test_scaled = scaler_loaded.transform(X_test_data)
+        
+        # Prediksi menggunakan model terbaik (Regresi Logistik)
+        best_model = st.session_state['best_model']
+        test_predictions = best_model.predict(X_test_scaled)
+        
+        test_df_result = test_df.copy()
+        test_df_result['predicted_price_range'] = test_predictions
+        
+        col_res1, col_res2 = st.columns([2, 1])
+        with col_res1:
+            st.write("### Sampel Data dengan Prediksi")
+            display_cols = ['id', 'battery_power', 'ram', 'predicted_price_range']
+            display_cols = [c for c in display_cols if c in test_df_result.columns]
+            st.dataframe(test_df_result[display_cols].head(15))
+            
+        with col_res2:
+            st.write("### Distribusi Prediksi")
+            st.dataframe(test_df_result['predicted_price_range'].value_counts().sort_index().rename_axis("Price Range").reset_index(name="Jumlah"))
+
+        # Fitur unduh CSV
+        csv_data = test_df_result.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Unduh Hasil Prediksi (CSV)",
+            data=csv_data,
+            file_name='hasil_prediksi_ponsel.csv',
+            mime='text/csv'
+        )
+else:
+    st.info("Silakan unggah file `train.csv` di panel sisi kiri untuk memulai analisis.")
